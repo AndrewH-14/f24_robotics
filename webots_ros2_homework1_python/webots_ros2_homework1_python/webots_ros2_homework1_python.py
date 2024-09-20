@@ -12,32 +12,94 @@ from nav_msgs.msg import Odometry
 from rclpy.qos import ReliabilityPolicy, QoSProfile
 
 import math
+from   enum import Enum, auto
 
-LINEAR_VEL_FORWARD   = 0.15
-LINEAR_VEL_TURNING   = 0.07
-STOP_DISTANCE        = 0.2
-LIDAR_ERROR          = 0.05
-LIDAR_AVOID_DISTANCE = 0.7
-SAFE_STOP_DISTANCE   = STOP_DISTANCE + LIDAR_ERROR
-RIGHT_SIDE_INDEX     = 270
-RIGHT_FRONT_INDEX    = 210
-LEFT_FRONT_INDEX     = 150
-LEFT_SIDE_INDEX      = 90
+# the number of duplicate positions before entering error mode
+MAX_DUP_POSITIONS                  = 10
+
+# distance at which to detect walls and objects
+FORWARD_DETECT_RANGE               = 0.6
+LEFT_DETECT_RANGE                  = 0.2
+RIGHT_DETECT_RANGE                 = 0.6
+BACKWARD_DETECT_RANGE              = 0.2
+
+# forward speed configuration
+NORMAL_FORWARD_LINEAR_SPEED        = 0.1
+NORMAL_FORWARD_ANGULAR_SPEED       = 0.0
+
+# turning left speed configuration
+NORMAL_TURNING_LEFT_LINEAR_SPEED   = 0.1
+NORMAL_TURNING_LEFT_ANGULAR_SPEED  = 0.5
+
+# turning right speed configuration
+NORMAL_TURNING_RIGHT_LINEAR_SPEED  = 0.1
+NORMAL_TURNING_RIGHT_ANGULAR_SPEED = -0.5
+
+# backward speed configuration
+NORMAL_BACKWARD_LINEAR_SPEED       = -0.1
+NORMAL_BACKWARD_ANGULAR_SPEED      = 0.0
+
+# struck speed configuration
+STUCK_LINEAR_SPEED                 = 0.0
+STUCK_ANGULAR_SPEED                = 0.0
+
+# error detection forward speed configuration
+ERROR_FORWARD_LINEAR_SPEED         = 0.1
+ERROR_FORWARD_ANGULAR_SPEED        = 0.0
+
+# error detection left speed configuration
+ERROR_LEFT_LINEAR_SPEED           = 0.075
+ERROR_LEFT_ANGULAR_SPEED          = 0.5
+
+# error detection backward speed configuration
+ERROR_BACKWARD_LINEAR_SPEED       = -0.1
+ERROR_BACKWARD_ANGULAR_SPEED      = 0.0
+
+# The indexes of various position in the laser scan array
+INITIAL_BACK_INDEX = 0
+BACK_LEFT_INDEX    = 45
+LEFT_INDEX         = 90
+FRONT_LEFT_INDEX   = 135
+FRONT_INDEX        = 180
+FRONT_RIGHT_INDEX  = 225
+RIGHT_INDEX        = 270
+BACK_RIGHT_INDEX   = 315
+FINAL_BACK_INDEX   = 359
+
+class WallFollowingStates(Enum):
+    # nothing is detected, following wall, or moving past object
+    STATE_MOVE_FORWARD = auto()
+    # turning around a corner due to wall or object
+    STATE_TURN_RIGHT    = auto()
+    # reached a corner or moving around an object
+    STATE_TURN_LEFT     = auto()
+    # reached a dead end only option is to go backward
+    STATE_MOVE_BACKWARD = auto()
+    # attempted to go backward unsuccessfully, robot is stuck
+    STATE_STUCK         = auto()
 
 class WallFollower(Node):
 
     def __init__(self):
+        '''
+        The initializing function of the wall follower node.
+        '''
         # Initialize the publisher via parent class
         super().__init__('wall_follower_node')
 
         # Initialize values used for heuristic navigation
-        self.scan_cleaned     = []
-        self.stall            = False
-        self.turtlebot_moving = False
-        self.laser_forward    = 0
-        self.odom_data        = 0
-        self.pose_saved       = ''
-        self.cmd              = Twist()
+        self.scan_cleaned  = []
+        self.pose          = ''
+
+        self.original_duplicate_pose = ''
+        self.original_duplicate_scan = []
+
+        self.duplicate_count = 0
+        self.recovery_cycles = 0
+
+        self.cmd = Twist()
+
+        self.state = WallFollowingStates.STATE_MOVE_FORWARD
 
         # Initialize the publisher for velcity commands
         self.publisher_  = self.create_publisher(
@@ -74,6 +136,9 @@ class WallFollower(Node):
         Parameters:
         -----------
             msg1: The msg received via the LaserScan subscription.
+        Returns:
+        --------
+            None
         '''
         # Erase stale laser range data
         self.scan_cleaned = []
@@ -102,7 +167,11 @@ class WallFollower(Node):
         Parameters:
         -----------
             msg2: The msg revieved via the Odometry subscription.
+        Returns:
+        --------
+            None
         '''
+
         # Get the current position and orientation information
         position    = msg2.pose.pose.position
         orientation = msg2.pose.pose.orientation
@@ -112,76 +181,276 @@ class WallFollower(Node):
         (qx, qy, qz, qw)   = (orientation.x, orientation.y, orientation.z, orientation.w)
 
         # Save the current position data for future use
-        self.pose_saved = position
+        self.pose = position
 
         return
 
+    def object_detected(self, min_foward_lidar, min_left_lidar, min_right_lidar, min_backward_lidar):
+        '''
+        Determines if an object is detected within the specified range or not.
+        '''
+        b_forward_object  = min_foward_lidar   < FORWARD_DETECT_RANGE
+        b_left_object     = min_left_lidar     < LEFT_DETECT_RANGE
+        b_right_object    = min_right_lidar    < RIGHT_DETECT_RANGE
+        b_backward_object = min_backward_lidar < BACKWARD_DETECT_RANGE
+
+        return (b_forward_object, b_left_object, b_right_object, b_backward_object)
+
+    def in_same_position(self):
+        '''
+        Checks to see if the position reported by the robot is the same as
+        previously reported.
+
+        Returns:
+        --------
+            bool: Whether or not the position is the same
+        '''
+        duplicate_x          = False
+        duplicate_y          = False
+        duplicate_laser_scan = False
+
+        x_diff = math.fabs(self.pose.x - self.original_duplicate_pose.x)
+        y_diff = math.fabs(self.pose.y - self.original_duplicate_pose.y)
+
+        for idx in range(len(self.scan_cleaned)):
+            if math.fabs(self.scan_cleaned[idx] - self.original_duplicate_scan[idx]) < 0.01:
+                duplicate_laser_scan = True
+
+        if duplicate_laser_scan:
+            self.get_logger().info(f'Duplicate LaserScan value detecteds')
+        if x_diff < 0.3:
+            self.get_logger().info(f'Duplicate x value detected: {x_diff}')
+            duplicate_x = True
+        if y_diff < 0.3:
+            self.get_logger().info(f'Duplicate y value detected: {y_diff}')
+            duplicate_y = True
+
+        if duplicate_x and duplicate_y and duplicate_laser_scan:
+            return False
+
+        return False
+
+    def get_state(self):
+        '''
+        Determines what state the robot is in based on the laser scan data.
+
+        @note This functions assumes the lidar data stored in instance variable
+              is up to date and accurate.
+
+        Returns:
+        --------
+            WallFollowingStates:
+                An enum variable representing which state that the robot is
+                currently in.
+        '''
+        # Get the lidar data for the different regions
+        left_lidar_data       = self.scan_cleaned[BACK_LEFT_INDEX:FRONT_LEFT_INDEX]
+        right_lidar_data      = self.scan_cleaned[FRONT_RIGHT_INDEX:BACK_RIGHT_INDEX]
+        front_lidar_data      = self.scan_cleaned[FRONT_LEFT_INDEX:FRONT_RIGHT_INDEX]
+        back_left_lidar_data  = self.scan_cleaned[INITIAL_BACK_INDEX:BACK_LEFT_INDEX]
+        back_right_lidar_data = self.scan_cleaned[BACK_RIGHT_INDEX:FINAL_BACK_INDEX]
+        back_lidar_data       = back_left_lidar_data + back_right_lidar_data
+
+        # Get the minimum data to determine robot's state
+        min_left_lidar_data  = min(left_lidar_data)
+        min_right_lidar_data = min(right_lidar_data)
+        min_front_lidar_data = min(front_lidar_data)
+        min_back_lidar_data  = min(back_lidar_data)
+
+        # Determine where objects are detected
+        b_forward_object, b_left_object, b_right_object, b_backward_object = self.object_detected(
+            min_front_lidar_data,
+            min_left_lidar_data,
+            min_right_lidar_data,
+            min_back_lidar_data
+        )
+
+        # Obstacle in all regions
+        if b_left_object and b_right_object and b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in all regions')
+            return WallFollowingStates.STATE_STUCK
+
+        # Obstacle in no regions
+        if not b_left_object and not b_right_object and not b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in no regions')
+            return WallFollowingStates.STATE_MOVE_FORWARD
+
+        # Obstacle in left, right, and front regions
+        elif b_left_object and b_right_object and b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in left, right, and front regions')
+            return WallFollowingStates.STATE_MOVE_BACKWARD
+
+        # Obstacle in left, right, and back regions
+        elif b_left_object and b_right_object and not b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in left, right, and back regions')
+            return WallFollowingStates.STATE_MOVE_FORWARD
+
+        # Obstacle in right, front, and back regions
+        elif not b_left_object and b_right_object and b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in right, front, and back regions')
+            return WallFollowingStates.STATE_TURN_LEFT
+
+        # Obstacle in left, front, and back regions
+        elif b_left_object and not b_right_object and b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in left, front, and back regions')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in left and right region
+        elif b_left_object and b_right_object and not b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in left and right regions')
+            return WallFollowingStates.STATE_MOVE_FORWARD
+
+        # Obstacle in front and right region
+        elif not b_left_object and b_right_object and b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in front and right regions')
+            return WallFollowingStates.STATE_TURN_LEFT
+
+        # Obstacle in front and left region
+        elif b_left_object and not b_right_object and b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in front and left regions')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in front and back region
+        elif not b_left_object and not b_right_object and b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in front and back regions')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in back and left region
+        elif b_left_object and not b_right_object and not b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in back and left region')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in back and right region
+        elif not b_left_object and b_right_object and not b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in back and right region')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in front region only
+        elif not b_left_object and not b_right_object and b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in front region')
+            return WallFollowingStates.STATE_TURN_LEFT
+
+        # Obstacle in back region only
+        elif not b_left_object and not b_right_object and not b_forward_object and b_backward_object:
+            self.get_logger().info('obstacle detected in back region')
+            return WallFollowingStates.STATE_MOVE_FORWARD
+
+        # Obstacle in right region only
+        elif not b_left_object and b_right_object and not b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in right region')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        # Obstacle in left region only
+        elif b_left_object and not b_right_object and not b_forward_object and not b_backward_object:
+            self.get_logger().info('obstacle detected in left region')
+            return WallFollowingStates.STATE_TURN_RIGHT
+
+        return WallFollowingStates.STATE_STUCK
+
     def timer_callback(self):
         '''
-        Callback function that will executed once during the specified time
-        period. This will use the laser and odometry data to determine what
-        the robot should do.
+        Callback function that will execute once during the specified time
+        period. This will collect the laser and odometry data before calling
+        the current state's function.
         '''
-        # If we have not yey received any laser data exit immediantely
-        if (len(self.scan_cleaned) == 0):
-            self.turtlebot_moving = False
+        # if we have not yey received any laser data exit immediantely
+        if (len(self.scan_cleaned) == 0) or (self.pose == ''):
             return
 
-        # Get the minimum detected range from the front left region
-        left_lidar_min  = min(self.scan_cleaned[LEFT_SIDE_INDEX:LEFT_FRONT_INDEX])
-        # Get the minimum detected range from the front right region
-        right_lidar_min = min(self.scan_cleaned[RIGHT_FRONT_INDEX:RIGHT_SIDE_INDEX])
-        # Get the minimum detected range from the front region
-        front_lidar_min = min(self.scan_cleaned[LEFT_FRONT_INDEX:RIGHT_FRONT_INDEX])
+        # if the same position has not been detected 10 times, continue execution
+        # as normal
+        if self.duplicate_count < 10:
 
-        # If something is detected directly in front of the robot stop
-        if front_lidar_min < SAFE_STOP_DISTANCE:
+            # If there is not currently an original position dupilicate, set it
+            # to the current position value
+            if self.original_duplicate_pose == '':
+                self.original_duplicate_pose = self.pose
 
-            if self.turtlebot_moving == True:
+            # if there is not currently an original laser scan duplcate, set it
+            # to the current laser scan
+            if self.original_duplicate_scan == []:
+                self.original_duplicate_scan = self.scan_cleaned
 
-                self.get_logger().info('Stopping')
+            # check if we are in the same position based on the position and
+            # laser scan values.
+            if self.in_same_position():
+                self.get_logger().info('Duplicate Position Detected')
+                self.recovery_cycles  = 20
+                self.duplicate_count += 1
 
-                self.turtlebot_moving = False
-                self.cmd.linear.x     = 0.0
-                self.cmd.angular.z    = 0.0
+            # if we are not in the same position reset the stored duplicate
+            # values and count
+            else:
+                self.get_logger().info('Reseting Duplicate Counter')
+                self.original_duplicate_pose = ''
+                self.original_duplicate_scan = []
+                self.duplicate_count         = 0
+
+            # determine which state we are in
+            self.state = self.get_state()
+
+            if WallFollowingStates.STATE_MOVE_FORWARD == self.state:
+                self.get_logger().info('Entering Move Forward State')
+                self.cmd.linear.x  = NORMAL_FORWARD_LINEAR_SPEED
+                self.cmd.angular.z = NORMAL_FORWARD_ANGULAR_SPEED
                 self.publisher_.publish(self.cmd)
 
-                return
+            elif WallFollowingStates.STATE_MOVE_BACKWARD == self.state:
+                self.get_logger().info('Entering Move Backward State')
+                self.cmd.linear.x  = NORMAL_BACKWARD_LINEAR_SPEED
+                self.cmd.angular.z = NORMAL_BACKWARD_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-        # If something is detected distantly in front of the robot, attempt
-        # to avoid it
-        elif front_lidar_min < LIDAR_AVOID_DISTANCE:
+            elif WallFollowingStates.STATE_TURN_RIGHT == self.state:
+                self.get_logger().info('Entering Turn Right State')
+                self.cmd.linear.x  = NORMAL_TURNING_RIGHT_LINEAR_SPEED
+                self.cmd.angular.z = NORMAL_TURNING_RIGHT_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-            self.get_logger().info('Turning')
+            elif WallFollowingStates.STATE_TURN_LEFT == self.state:
+                self.get_logger().info('Entering Turn Left State')
+                self.cmd.linear.x  = NORMAL_TURNING_LEFT_LINEAR_SPEED
+                self.cmd.angular.z = NORMAL_TURNING_LEFT_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-            self.turtlebot_moving = True
-            self.cmd.linear.x     = LINEAR_VEL_TURNING
+            elif WallFollowingStates.STATE_STUCK == self.state:
+                self.get_logger().info('Entering Stuck State')
+                self.cmd.linear.x  = STUCK_LINEAR_SPEED
+                self.cmd.angular.z = STUCK_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-            if (right_lidar_min > left_lidar_min):
-                self.cmd.angular.z = -0.3
             else:
-                self.cmd.angular.z = 0.3
+                self.get_logger().info('Invalid State Detected!')
 
-            self.publisher_.publish(self.cmd)
-
-        # If nothing is detected, simply move forward
+        # 10 duplicate positions have been detected, enter revovery mode
         else:
+            self.recovery_cycles -= 1
 
-            self.get_logger().info('Continue Moving')
+            if self.recovery_cycles == 0:
+                self.get_logger().info('Exiting Recovery State')
+                self.duplicate_count         = 0
+                self.original_duplicate_pose = ''
+                self.original_duplicate_scan = []
 
-            self.turtlebot_moving = True
-            self.cmd.linear.x     = LINEAR_VEL_FORWARD
-            self.cmd.linear.z     = 0.0
-            self.publisher_.publish(self.cmd)
+            elif self.recovery_cycles > 15:
+                self.get_logger().info('Move Backward to Attempt to Free Robot')
+                self.cmd.linear.x  = ERROR_BACKWARD_LINEAR_SPEED
+                self.cmd.angular.z = ERROR_BACKWARD_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-        self.get_logger().info('Distance of the obstacle : %f' % front_lidar_min)
-        self.get_logger().info('I received: "%s"' % str(self.odom_data))
+            elif self.recovery_cycles > 10:
+                self.get_logger().info('Turn Left to Attempt to Free Robot')
+                self.cmd.linear.x  = ERROR_LEFT_LINEAR_SPEED
+                self.cmd.angular.z = ERROR_LEFT_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-        if self.stall == True:
-            self.get_logger().info('Stall reported')
+            else:
+                self.get_logger().info('Move Forward to Attempt to Free Robot')
+                self.cmd.linear.x  = ERROR_FORWARD_LINEAR_SPEED
+                self.cmd.angular.z = ERROR_FORWARD_ANGULAR_SPEED
+                self.publisher_.publish(self.cmd)
 
-        # Display the message on the console
-        self.get_logger().info('Publishing: "%s"' % self.cmd)
+        return
 
 def main(args=None):
     # initialize the ROS communication
