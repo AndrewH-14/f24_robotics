@@ -19,9 +19,9 @@ MAX_DUP_POSITIONS                  = 10
 
 # distance at which to detect walls and objects
 FORWARD_DETECT_RANGE               = 0.6
-LEFT_DETECT_RANGE                  = 0.2
+LEFT_DETECT_RANGE                  = 0.1
 RIGHT_DETECT_RANGE                 = 0.6
-BACKWARD_DETECT_RANGE              = 0.2
+BACKWARD_DETECT_RANGE              = 0.1
 
 # forward speed configuration
 NORMAL_FORWARD_LINEAR_SPEED        = 0.1
@@ -36,7 +36,7 @@ NORMAL_TURNING_RIGHT_LINEAR_SPEED  = 0.1
 NORMAL_TURNING_RIGHT_ANGULAR_SPEED = -0.5
 
 # backward speed configuration
-NORMAL_BACKWARD_LINEAR_SPEED       = -0.1
+NORMAL_BACKWARD_LINEAR_SPEED       = -0.075
 NORMAL_BACKWARD_ANGULAR_SPEED      = 0.0
 
 # struck speed configuration
@@ -79,6 +79,8 @@ class WallFollowingStates(Enum):
     STATE_STUCK         = auto()
 
 class WallFollower(Node):
+    '''
+    '''
 
     def __init__(self):
         '''
@@ -87,28 +89,40 @@ class WallFollower(Node):
         # Initialize the publisher via parent class
         super().__init__('wall_follower_node')
 
-        # Initialize values used for heuristic navigation
+        # stores most up-to-date odometry and laser scan data
         self.scan_cleaned  = []
         self.pose          = ''
 
+        # stores the first duplicate position and laser scan data
         self.original_duplicate_pose = ''
         self.original_duplicate_scan = []
 
+        # variables used in to initiate and handle the error recovery state
         self.duplicate_count = 0
         self.recovery_cycles = 0
 
+        # will be used to send commands to the robot
         self.cmd = Twist()
 
-        self.state = WallFollowingStates.STATE_MOVE_FORWARD
+        # the state that the robot is currently in, this value will be
+        # overwritten
+        self.state          = WallFollowingStates.STATE_MOVE_FORWARD
+        self.previous_state = self.state
 
-        # Initialize the publisher for velcity commands
+        # offset values to be used to ensure odometry data is as close to
+        # accurate as possible even if the robot gets stuck. To get the real
+        # current position compute <reported x> + <x_offset>.
+        self.x_offset = 0.0
+        self.y_offset = 0.0
+
+        # initialize the publisher for velcity commands
         self.publisher_  = self.create_publisher(
             Twist,
             'cmd_vel',
             10
         )
 
-        # Initialize the subscription to laser data
+        # initialize the subscription to laser data
         self.subscriber1 = self.create_subscription(
             LaserScan,
             '/scan',
@@ -116,7 +130,7 @@ class WallFollower(Node):
             QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         )
 
-        # Initialize the subscription to odometry data
+        # initialize the subscription to odometry data
         self.subscriber2 = self.create_subscription(
             Odometry,
             '/odom',
@@ -124,9 +138,9 @@ class WallFollower(Node):
             QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         )
 
-        # Amount of time between checks for updates
+        # amount of time between checks for updates
         timer_period = 0.5
-        # The time that will cause the callback to execute
+        # the time that will cause the callback to execute
         self.timer   = self.create_timer(timer_period, self.timer_callback)
 
     def listener_callback1(self, msg1):
@@ -164,6 +178,7 @@ class WallFollower(Node):
         '''
         Callback that executes upon new Odometry data being received. Stores
         the new data in instance varaible for use.
+
         Parameters:
         -----------
             msg2: The msg revieved via the Odometry subscription.
@@ -313,7 +328,7 @@ class WallFollower(Node):
         # Obstacle in front and back region
         elif not b_left_object and not b_right_object and b_forward_object and b_backward_object:
             self.get_logger().info('obstacle detected in front and back regions')
-            return WallFollowingStates.STATE_TURN_RIGHT
+            return WallFollowingStates.STATE_TURN_LEFT
 
         # Obstacle in back and left region
         elif b_left_object and not b_right_object and not b_forward_object and b_backward_object:
@@ -371,23 +386,24 @@ class WallFollower(Node):
             if self.original_duplicate_scan == []:
                 self.original_duplicate_scan = self.scan_cleaned
 
-            # check if we are in the same position based on the position and
-            # laser scan values.
-            if self.in_same_position():
-                self.get_logger().info('Duplicate Position Detected')
-                self.recovery_cycles  = 20
-                self.duplicate_count += 1
+            # determine which state we are in
+            self.previous_state = self.state
+            self.state          = self.get_state()
 
-            # if we are not in the same position reset the stored duplicate
-            # values and count
+            # detect if we are in the same state
+            if self.previous_state == self.state:
+                self.get_logger().info('Duplicate State Detected')
+                self.duplicate_count += 1
             else:
                 self.get_logger().info('Reseting Duplicate Counter')
                 self.original_duplicate_pose = ''
                 self.original_duplicate_scan = []
                 self.duplicate_count         = 0
 
-            # determine which state we are in
-            self.state = self.get_state()
+            # write the coordinates to a file
+            f = open('coordinates.txt', 'a+')
+            f.write(f'({self.pose.x - self.x_offset},{self.pose.y - self.y_offset})\n')
+            f.close()
 
             if WallFollowingStates.STATE_MOVE_FORWARD == self.state:
                 self.get_logger().info('Entering Move Forward State')
@@ -422,33 +438,43 @@ class WallFollower(Node):
             else:
                 self.get_logger().info('Invalid State Detected!')
 
-        # 10 duplicate positions have been detected, enter revovery mode
         else:
-            self.recovery_cycles -= 1
 
+            # attempting to recover, compute offset values
             if self.recovery_cycles == 0:
-                self.get_logger().info('Exiting Recovery State')
-                self.duplicate_count         = 0
-                self.original_duplicate_pose = ''
-                self.original_duplicate_scan = []
+                self.x_offset += (self.original_duplicate_pose.x - self.pose.x)
+                self.y_offset += (self.original_duplicate_pose.y - self.pose.y)
 
-            elif self.recovery_cycles > 15:
+            # move backward in attempt gain ability to turn
+            if self.recovery_cycles < 5:
                 self.get_logger().info('Move Backward to Attempt to Free Robot')
                 self.cmd.linear.x  = ERROR_BACKWARD_LINEAR_SPEED
                 self.cmd.angular.z = ERROR_BACKWARD_ANGULAR_SPEED
                 self.publisher_.publish(self.cmd)
 
-            elif self.recovery_cycles > 10:
+            # attempt to turn around object we are stuck at
+            elif self.recovery_cycles < 10:
                 self.get_logger().info('Turn Left to Attempt to Free Robot')
                 self.cmd.linear.x  = ERROR_LEFT_LINEAR_SPEED
                 self.cmd.angular.z = ERROR_LEFT_ANGULAR_SPEED
                 self.publisher_.publish(self.cmd)
 
-            else:
+            # attempt to move forward past the object we are stuck at
+            elif self.recovery_cycles < 15:
                 self.get_logger().info('Move Forward to Attempt to Free Robot')
                 self.cmd.linear.x  = ERROR_FORWARD_LINEAR_SPEED
                 self.cmd.angular.z = ERROR_FORWARD_ANGULAR_SPEED
                 self.publisher_.publish(self.cmd)
+
+            # return to normal state machine
+            else:
+                self.get_logger().info('Exiting Recovery State')
+                self.duplicate_count         = 0
+                self.recovery_cycles         = 0
+                self.original_duplicate_pose = ''
+                self.original_duplicate_scan = []
+
+            self.recovery_cycles += 1
 
         return
 
