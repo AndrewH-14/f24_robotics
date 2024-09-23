@@ -15,25 +15,25 @@ import math
 from   enum import Enum, auto
 
 # the number of duplicate positions before entering error mode
-MAX_DUP_POSITIONS                  = 10
+MAX_DUP_POSITIONS                  = 30
 
 # distance at which to detect walls and objects
 FORWARD_DETECT_RANGE               = 0.6
-LEFT_DETECT_RANGE                  = 0.1
-RIGHT_DETECT_RANGE                 = 0.6
-BACKWARD_DETECT_RANGE              = 0.1
+LEFT_DETECT_RANGE                  = 0.0
+RIGHT_DETECT_RANGE                 = 0.7
+BACKWARD_DETECT_RANGE              = 0.0
 
 # forward speed configuration
-NORMAL_FORWARD_LINEAR_SPEED        = 0.1
+NORMAL_FORWARD_LINEAR_SPEED        = 0.075
 NORMAL_FORWARD_ANGULAR_SPEED       = 0.0
 
 # turning left speed configuration
-NORMAL_TURNING_LEFT_LINEAR_SPEED   = 0.1
-NORMAL_TURNING_LEFT_ANGULAR_SPEED  = 0.5
+NORMAL_TURNING_LEFT_LINEAR_SPEED   = 0.075
+NORMAL_TURNING_LEFT_ANGULAR_SPEED  = 0.6
 
 # turning right speed configuration
 NORMAL_TURNING_RIGHT_LINEAR_SPEED  = 0.1
-NORMAL_TURNING_RIGHT_ANGULAR_SPEED = -0.5
+NORMAL_TURNING_RIGHT_ANGULAR_SPEED = -0.25
 
 # backward speed configuration
 NORMAL_BACKWARD_LINEAR_SPEED       = -0.075
@@ -92,10 +92,15 @@ class WallFollower(Node):
         # stores most up-to-date odometry and laser scan data
         self.scan_cleaned  = []
         self.pose          = ''
+        self.prev_pose     = ''
 
-        # stores the first duplicate position and laser scan data
-        self.original_duplicate_pose = ''
-        self.original_duplicate_scan = []
+        self.x_change_since_last_report = 0
+        self.y_change_since_last_report = 0
+
+        # stores the odometry data to be stored, this should be updated based on
+        # whether we detect we are stuck or not.
+        self.actual_x_pose = 0
+        self.actual_y_pose = 0
 
         # variables used in to initiate and handle the error recovery state
         self.duplicate_count = 0
@@ -108,12 +113,6 @@ class WallFollower(Node):
         # overwritten
         self.state          = WallFollowingStates.STATE_MOVE_FORWARD
         self.previous_state = self.state
-
-        # offset values to be used to ensure odometry data is as close to
-        # accurate as possible even if the robot gets stuck. To get the real
-        # current position compute <reported x> + <x_offset>.
-        self.x_offset = 0.0
-        self.y_offset = 0.0
 
         # initialize the publisher for velcity commands
         self.publisher_  = self.create_publisher(
@@ -195,8 +194,16 @@ class WallFollower(Node):
         (posx, posy, posz) = (position.x, position.y, position.z)
         (qx, qy, qz, qw)   = (orientation.x, orientation.y, orientation.z, orientation.w)
 
+        if self.pose == '':
+            self.prev_pose = position
+        else:
+            self.prev_pose = self.pose
+
         # Save the current position data for future use
         self.pose = position
+
+        self.x_change_since_last_report += self.pose.x - self.prev_pose.x
+        self.y_change_since_last_report += self.pose.y - self.prev_pose.y
 
         return
 
@@ -210,40 +217,6 @@ class WallFollower(Node):
         b_backward_object = min_backward_lidar < BACKWARD_DETECT_RANGE
 
         return (b_forward_object, b_left_object, b_right_object, b_backward_object)
-
-    def in_same_position(self):
-        '''
-        Checks to see if the position reported by the robot is the same as
-        previously reported.
-
-        Returns:
-        --------
-            bool: Whether or not the position is the same
-        '''
-        duplicate_x          = False
-        duplicate_y          = False
-        duplicate_laser_scan = False
-
-        x_diff = math.fabs(self.pose.x - self.original_duplicate_pose.x)
-        y_diff = math.fabs(self.pose.y - self.original_duplicate_pose.y)
-
-        for idx in range(len(self.scan_cleaned)):
-            if math.fabs(self.scan_cleaned[idx] - self.original_duplicate_scan[idx]) < 0.01:
-                duplicate_laser_scan = True
-
-        if duplicate_laser_scan:
-            self.get_logger().info(f'Duplicate LaserScan value detecteds')
-        if x_diff < 0.3:
-            self.get_logger().info(f'Duplicate x value detected: {x_diff}')
-            duplicate_x = True
-        if y_diff < 0.3:
-            self.get_logger().info(f'Duplicate y value detected: {y_diff}')
-            duplicate_y = True
-
-        if duplicate_x and duplicate_y and duplicate_laser_scan:
-            return False
-
-        return False
 
     def get_state(self):
         '''
@@ -374,36 +347,39 @@ class WallFollower(Node):
 
         # if the same position has not been detected 10 times, continue execution
         # as normal
-        if self.duplicate_count < 10:
-
-            # If there is not currently an original position dupilicate, set it
-            # to the current position value
-            if self.original_duplicate_pose == '':
-                self.original_duplicate_pose = self.pose
-
-            # if there is not currently an original laser scan duplcate, set it
-            # to the current laser scan
-            if self.original_duplicate_scan == []:
-                self.original_duplicate_scan = self.scan_cleaned
+        if self.duplicate_count < MAX_DUP_POSITIONS:
 
             # determine which state we are in
             self.previous_state = self.state
             self.state          = self.get_state()
 
-            # detect if we are in the same state
+            # if we are in the same state, don't report position change if so
             if self.previous_state == self.state:
                 self.get_logger().info('Duplicate State Detected')
                 self.duplicate_count += 1
-            else:
-                self.get_logger().info('Reseting Duplicate Counter')
-                self.original_duplicate_pose = ''
-                self.original_duplicate_scan = []
-                self.duplicate_count         = 0
+                if self.duplicate_count < MAX_DUP_POSITIONS / 2:
+                    self.actual_x_pose += self.x_change_since_last_report
+                    self.actual_y_pose += self.y_change_since_last_report
+                    self.x_change_since_last_report = 0
+                    self.y_change_since_last_report = 0
+                    # write the coordinates to a file
+                    f = open('coordinates.txt', 'a+')
+                    f.write(f'({self.actual_x_pose},{self.actual_y_pose})\n')
+                    f.close()
 
-            # write the coordinates to a file
-            f = open('coordinates.txt', 'a+')
-            f.write(f'({self.pose.x - self.x_offset},{self.pose.y - self.y_offset})\n')
-            f.close()
+            # if we're are not in the same state, assume we are moving correctly
+            # and report the position change.
+            else:
+                self.get_logger().info('New State Detected')
+                self.duplicate_count = 0
+                self.actual_x_pose += self.x_change_since_last_report
+                self.actual_y_pose += self.y_change_since_last_report
+                self.x_change_since_last_report = 0
+                self.y_change_since_last_report = 0
+                # write the coordinates to a file
+                f = open('coordinates.txt', 'a+')
+                f.write(f'({self.actual_x_pose},{self.actual_y_pose})\n')
+                f.close()
 
             if WallFollowingStates.STATE_MOVE_FORWARD == self.state:
                 self.get_logger().info('Entering Move Forward State')
@@ -440,10 +416,20 @@ class WallFollower(Node):
 
         else:
 
-            # attempting to recover, compute offset values
+            # attempting to recover, reset change values
             if self.recovery_cycles == 0:
-                self.x_offset += (self.original_duplicate_pose.x - self.pose.x)
-                self.y_offset += (self.original_duplicate_pose.y - self.pose.y)
+                self.x_change_since_last_report = 0
+                self.y_change_since_last_report = 0
+
+            self.actual_x_pose += self.x_change_since_last_report
+            self.actual_y_pose += self.y_change_since_last_report
+            self.x_change_since_last_report = 0
+            self.y_change_since_last_report = 0
+
+            # write the coordinates to a file
+            f = open('coordinates.txt', 'a+')
+            f.write(f'({self.actual_x_pose},{self.actual_y_pose})\n')
+            f.close()
 
             # move backward in attempt gain ability to turn
             if self.recovery_cycles < 5:
@@ -471,8 +457,6 @@ class WallFollower(Node):
                 self.get_logger().info('Exiting Recovery State')
                 self.duplicate_count         = 0
                 self.recovery_cycles         = 0
-                self.original_duplicate_pose = ''
-                self.original_duplicate_scan = []
 
             self.recovery_cycles += 1
 

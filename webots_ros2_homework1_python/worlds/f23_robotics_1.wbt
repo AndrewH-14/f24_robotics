@@ -54,30 +54,10 @@ TexturedBackground {
 }
 TexturedBackgroundLight {
 }
-TurtleBot3Burger {
-   translation 1.8 6.3 .05
-   rotation 0 0 1 -1.57
-
-  controller "<extern>"
-  controllerArgs [
-    ""
-  ]
-  extensionSlot [
-    Solid {
-      name "imu_link"
-    }
-    GPS {
-    }
-    InertialUnit {
-      name "inertial_unit"
-    }
-    RobotisLds01 {
-    }
-  ]
-}
 #TurtleBot3Burger {
-#  translation 0.96 0.492 .05
-#  rotation 0 0 1 0
+#   translation 7.6 3.5 .05
+#   rotation 0 0 1 0
+#
 #  controller "<extern>"
 #  controllerArgs [
 #    ""
@@ -115,11 +95,29 @@ TurtleBot3Burger {
 #    }
 #  ]
 #}
+TurtleBot3Burger {
+  translation 1.8 6.3 .05
+  rotation 0 0 1 -1.57
+  controller "<extern>"
+  controllerArgs [
+    ""
+  ]
+  extensionSlot [
+    Solid {
+      name "imu_link"
+    }
+    GPS {
+    }
+    InertialUnit {
+      name "inertial_unit"
+    }
+    RobotisLds01 {
+    }
+  ]
+}
 #TurtleBot3Burger {
-#  translation 1.8 6.3 .05
-#  rotation 0 0 1 -1.57
-#  translation 7.46 3.5 .05
-#  rotation 0 0 0 0
+#  translation 0.96 0.492 .05
+#  rotation 0 0 1 0
 #  controller "<extern>"
 #  controllerArgs [
 #    ""

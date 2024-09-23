@@ -9,9 +9,9 @@ class starting_rotation(Enum):
     NEGATIVE_NINETY_DEGREES = auto()
 
 # The starting position of the robot
-STARTING_X = 1.8
-STARTING_Y = 6.3
-STARTING_ROTATION = starting_rotation.NEGATIVE_NINETY_DEGREES
+STARTING_X = 7.6
+STARTING_Y = 3.5
+STARTING_ROTATION = starting_rotation.ZERO_DEGREES
 
 # Area 1 boundary points
 AREA_ONE_TL = (2.6, 5.2)
@@ -432,26 +432,34 @@ def plot_paths(points, connections):
     # Generate the borders of the apartment
     plot_apartment(ax, WALL_POINTS, WALL_CONNECTIONS, False)
 
-    # Generate the paths that the robot took
-    (
-        total_path_length,
-        zone_one_furthest_point,
-        zone_two_furthest_point,
-        zone_three_furthest_point,
-        zone_four_furthest_point,
-        c_zone_one_furthest_point,
-        c_zone_two_furthest_point
-    ) = plot_path(ax, 'green', '', 'coordinates.txt')
+    prefix_dir = 'position_1'
+    filename_list = ['trial1.txt', 'trial2.txt', 'trial3.txt', 'trial4.txt', 'trial5.txt']
+    line_colors   = ['green', 'purple', 'red', 'orange', 'yellow']
 
-    print(
-        f'Total Path Length:                 {total_path_length}\n'         +
-        f'Area One Furthest Point:           {zone_one_furthest_point}\n'   +
-        f'Area Two Furthest Point:           {zone_two_furthest_point}\n'   +
-        f'Area Three Furthest Point:         {zone_three_furthest_point}\n' +
-        f'Area Four Furthest Point:          {zone_four_furthest_point}\n'  +
-        f'Challenge Area One Furthest Point: {c_zone_one_furthest_point}\n' +
-        f'Challenge Area Two Furthest Point: {c_zone_two_furthest_point}\n'
-    )
+    for filename, line_color in zip(filename_list, line_colors):
+
+        # Generate the paths that the robot took
+        (
+            total_path_length,
+            zone_one_furthest_point,
+            zone_two_furthest_point,
+            zone_three_furthest_point,
+            zone_four_furthest_point,
+            c_zone_one_furthest_point,
+            c_zone_two_furthest_point
+        ) = plot_path(ax, line_color, '', f'{prefix_dir}/{filename}')
+
+        print(
+            f'{filename}\n'                                                     +
+             '---------------------------------------------------------------\n'+
+            f'Total Path Length:                 {total_path_length}\n'         +
+            f'Area One Furthest Point:           {zone_one_furthest_point}\n'   +
+            f'Area Two Furthest Point:           {zone_two_furthest_point}\n'   +
+            f'Area Three Furthest Point:         {zone_three_furthest_point}\n' +
+            f'Area Four Furthest Point:          {zone_four_furthest_point}\n'  +
+            f'Challenge Area One Furthest Point: {c_zone_one_furthest_point}\n' +
+            f'Challenge Area Two Furthest Point: {c_zone_two_furthest_point}\n'
+        )
 
     # Show the grid
     ax.grid(True)
