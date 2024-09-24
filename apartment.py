@@ -9,9 +9,9 @@ class starting_rotation(Enum):
     NEGATIVE_NINETY_DEGREES = auto()
 
 # The starting position of the robot
-STARTING_X = 1.8
-STARTING_Y = 6.3
-STARTING_ROTATION = starting_rotation.NEGATIVE_NINETY_DEGREES
+STARTING_X = 7.6
+STARTING_Y = 3.5
+STARTING_ROTATION = starting_rotation.ZERO_DEGREES
 
 # Area 1 boundary points
 AREA_ONE_TL = (2.6, 5.2)
