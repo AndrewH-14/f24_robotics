@@ -1,0 +1,162 @@
+#VRML_SIM R2023b utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/appearances/protos/Parquetry.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/apartment_structure/protos/Wall.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/monicadelaine/webots_apriltag/master/apriltags/protos/tag36_11_00000.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/devices/robotis/protos/RobotisLds01.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/robots/robotis/turtlebot/protos/TurtleBot3Burger.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation 0.0022765014210180293 3.789897009265606e-05 -0.9999974080491151 3.10694186181706
+  position 12.541956410020735 0.3240462620406074 2.0973426527349592
+}
+tag36_11_00000 {
+  translation 0 0 0.15
+}
+TurtleBot3Burger {
+  translation -0.559 -0.0183 0
+  rotation -0.0011897999483280344 -0.018296923575128597 -0.9998318893512894 0.126
+  controller "<extern>"
+  controllerArgs [
+    ""
+  ]
+  extensionSlot [
+    Solid {
+      name "imu_link"
+    }
+    InertialUnit {
+      name "inertial_unit"
+    }
+    Camera {
+      translation 0.06 0 0
+      children [
+        Pose {
+          rotation 0 1 0 1.57
+        }
+      ]
+      fieldOfView 1
+      width 3280
+      height 2464
+    }
+    RobotisLds01 {
+    }
+  ]
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RectangleArena {
+  floorSize 7 7
+  floorAppearance Parquetry {
+  }
+}
+Wall {
+  translation -3.44 0 0
+  size 0.1 7 0.25
+}
+Wall {
+  translation 3.54 0 0
+  rotation -1 0 0 -5.307179586466759e-06
+  name "wall(1)"
+  size 0.1 7 0.25
+}
+Wall {
+  translation -0.0227785 -3.43586 0
+  rotation 0 0 1 1.57
+  name "wall(2)"
+  size 0.1 7 0.25
+}
+Wall {
+  translation -0.0172576 3.49413 0
+  rotation 0 0 1 1.57
+  name "wall(3)"
+  size 0.1 7 0.25
+}
+Wall {
+  translation 1.45909 -0.716634 0
+  rotation 0 0 1 1.57
+  name "wall(4)"
+  size 0.1 1.5 0.25
+}
+Wall {
+  translation 2.08144 1.42241 0
+  rotation 0 0 1 1.57
+  name "wall(5)"
+  size 0.1 3 0.25
+}
+Wall {
+  translation -2.76884 1.64705 0
+  rotation 0 0 1 1.57
+  name "wall(17)"
+  size 0.1 1.5 0.25
+}
+Wall {
+  translation -2.76036 -0.473548 0
+  rotation 0 0 1 1.57
+  name "wall(6)"
+  size 0.1 1.5 0.25
+}
+Wall {
+  translation -1.31935 0.79523 0
+  rotation 0 0 1 1.57
+  name "wall(16)"
+  size 0.1 1.5 0.25
+}
+Wall {
+  translation 2.83016 -0.027902 0
+  rotation 0 0 1 1.57
+  name "wall(7)"
+  size 0.1 1.5 0.25
+}
+Wall {
+  translation -0.60013 1.65818 0
+  name "wall(8)"
+  size 0.1 1.8 0.25
+}
+Wall {
+  translation -0.49013 -2.11182 0
+  name "wall(15)"
+  size 0.1 0.75 0.25
+}
+Wall {
+  translation -1.9817 -1.77412 0
+  rotation 0 0 1 1.57
+  name "wall(14)"
+  size 0.1 3 0.25
+}
+Wall {
+  translation -1.15013 -0.27182 0
+  name "wall(9)"
+  size 0.1 2 0.25
+}
+Wall {
+  translation 0.73987 -1.26182 0
+  name "wall(10)"
+  size 0.1 1 0.25
+}
+Wall {
+  translation -2.06013 2.12818 0
+  name "wall(11)"
+  size 0.1 1 0.25
+}
+Wall {
+  translation 0.64987 0.89818 0
+  name "wall(12)"
+  size 0.1 1 0.25
+}
+Wall {
+  translation 2.15987 -0.34182 0
+  name "wall(13)"
+  size 0.1 0.75 0.25
+}
+Wall {
+  translation 0.68987 2.95818 0
+  name "wall(18)"
+  size 0.1 1 0.25
+}
